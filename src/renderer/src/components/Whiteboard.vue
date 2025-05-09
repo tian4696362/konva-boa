@@ -1,15 +1,30 @@
 <template>
-  <div>
+  <div style="position: relative; width: 100%; height: 100%; overflow: hidden">
     <button @click="toggleSelection">选中</button>
     <button @click.stop="toggleDrawing">画笔</button>
     <button @click.stop="toggleQuadrilateral">四边形</button>
-    <div v-show="showBrushOptions" class="brush-options" @click.stop>
+    <div v-show="state.showBrushOptions" class="brush-options" @click.stop>
       <div class="color-picker">
-        <button @click="setBrushColor('#ff0000')" style="background: #ff0000"></button>
-        <button @click="setBrushColor('#00ff00')" style="background: #00ff00"></button>
-        <button @click="setBrushColor('#0000ff')" style="background: #0000ff"></button>
-        <button @click="setBrushColor('#ff00ff')" style="background: #ff00ff"></button>
-        <button @click="setBrushColor('#000000')" style="background: #000000"></button>
+        <button
+          @click="setBrushColor('#ff0000')"
+          style="background: #ff0000"
+        ></button>
+        <button
+          @click="setBrushColor('#00ff00')"
+          style="background: #00ff00"
+        ></button>
+        <button
+          @click="setBrushColor('#0000ff')"
+          style="background: #0000ff"
+        ></button>
+        <button
+          @click="setBrushColor('#ff00ff')"
+          style="background: #ff00ff"
+        ></button>
+        <button
+          @click="setBrushColor('#000000')"
+          style="background: #000000"
+        ></button>
       </div>
       <div class="size-picker">
         <button @click="setBrushWidth(3)">细</button>
@@ -23,57 +38,75 @@
     <button @click="clearScreen">清屏</button>
     <button @click="logAllPoints">智能识别</button>
     <button @click="saveCanvas">保存</button>
+    <button @click="open">放大镜</button>
     <v-stage
       ref="stageRef"
-      :config="stageConfig"
+      :style="{ 'pointer-events': activedBol ? 'auto' : 'none' }"
+      :config="state.stageConfig"
       @mousedown="handleMouseDown"
       @mousemove="handleMouseMove"
       @mouseup="handleMouseUp"
+      @touchmove="handleMouseMove"
+      @touchend="handleMouseUp"
+      @touchstart="handleMouseDown"
     >
       <v-layer>
         <v-rect
-          v-for="(rect, index) in rectangles"
+          v-for="(rect, index) in state.rectangles"
           :key="index"
           :config="rect"
           @click="handleRectClick(rect)"
+          @touchstart="handleRectClick(rect)"
           :draggable="false"
-          @transformstart="handleTransformStart"
-          @transformend="handleTransformEnd"
         />
+        <!-- @transformend="handleTransformEnd"  @transformstart="handleTransformStart" -->
         <v-transformer
           ref="transformerRef"
-          :config="transformerConfig"
-          :enabled="isSelectionEnabled && selectedItems.length > 0"
+          :config="{
+            ...state.transformerConfig,
+            // 添加移动端适配配置
+            rotationSnaps: [0, 90, 180, 270],
+            rotationSnapTolerance: 45,
+            anchorSize: 20,
+            borderStrokeWidth: 2,
+          }"
+          :enabled="state.isSelectionEnabled && state.selectedItems.length > 0"
         />
         <v-line
-          v-if="isDrawing && currentLinePoints.length > 0"
+          v-if="state.isDrawing && state.currentLinePoints.length > 0"
           :config="{
-            points: currentLinePoints,
-            stroke: selectColor,
-            strokeWidth: brushWidth,
-            tension: 0.5
+            points: state.currentLinePoints,
+            stroke: state.selectColor,
+            strokeWidth: state.brushWidth,
+            tension: 0.5,
           }"
         />
         <v-circle
-          v-if="isCompassing && currentCircleCenter && currentCircleRadius > 0"
+          v-if="
+            state.isCompassing &&
+            state.currentCircleCenter &&
+            state.currentCircleRadius > 0
+          "
           :config="{
-            x: currentCircleCenter.x,
-            y: currentCircleCenter.y,
-            radius: currentCircleRadius,
-            stroke: selectColor,
-            strokeWidth: brushWidth,
-            fill: 'transparent'
+            x: state.currentCircleCenter.x,
+            y: state.currentCircleCenter.y,
+            radius: state.currentCircleRadius,
+            stroke: state.selectColor,
+            strokeWidth: state.brushWidth,
+            fill: 'transparent',
           }"
         />
+        <!-- @touchstart="handleLineClick(line)" -->
         <v-line
-          v-for="(line, index) in drawnLines"
+          v-for="(line, index) in state.drawnLines"
           :key="index"
           :config="line"
           @click="handleLineClick(line)"
+          @touchstart="handleLineClick(line)"
           :draggable="false"
         />
         <v-circle
-          v-for="(circle, index) in drawnCircles"
+          v-for="(circle, index) in state.drawnCircles"
           :key="index"
           :config="circle"
           @click="handleCircleClick(circle)"
@@ -81,913 +114,1140 @@
         />
         <!-- 四边形 -->
         <v-rect
-          v-for="(quadrilateral, index) in drawnQuadrilaterals"
+          v-for="(quadrilateral, index) in state.drawnQuadrilaterals"
           :key="index"
           :config="quadrilateral"
           @click="handleQuadrilateralClick(quadrilateral)"
           :draggable="false"
         />
         <v-rect
-          v-if="isQuadrilateralDrawing && currentQuadrilateral"
-          :config="currentQuadrilateral"
+          v-if="state.isQuadrilateralDrawing && state.currentQuadrilateral"
+          :config="state.currentQuadrilateral"
         />
         <!-- 智能识别文字 -->
-        <v-text
-          v-for="(text, index) in drawnLines.filter((l) => l.type === 'text')"
-          :key="`text-${index}`"
-          :config="{
-            text: text.text,
-            x: text.x,
-            y: text.y,
-            fontSize: text.fontSize,
-            fill: text.fill,
-            draggable: isSelectionEnabled,
-            id: text.id
-          }"
-          @click="handleTextClick(text)"
-          @dragend="handleDragEnd"
-        />
+        <template v-if="state.drawnLines">
+          <v-text
+            v-for="(text, index) in state.drawnLines.filter(
+              (l) => l.type === 'text'
+            )"
+            :key="`text-${index}`"
+            :config="{
+              text: text.text,
+              x: text.x,
+              y: text.y,
+              fontSize: text.fontSize,
+              fill: text.fill,
+              draggable: state.isSelectionEnabled,
+              id: text.id,
+            }"
+            @click="handleTextClick(text)"
+            @dragend="handleDragEnd"
+          />
+        </template>
       </v-layer>
       <!-- @transformend="handleTextTransform" -->
     </v-stage>
-    <!-- <div style="width: 500px; height: 500px" v-html="recoHtml"></div> -->
+    <div
+      ref="virtualCursor"
+      v-show="isVirtualCursorVisible"
+      class="virtual-cursor"
+    ></div>
+    <!-- v-show="isVirtualCursorVisible" <div style="width: 500px; height: 500px" v-html="recoHtml"></div> -->
   </div>
 </template>
 
-<script>
-import VueKonva from 'vue-konva'
-import useRecognizer from '../utils/useRecognizer'
-export default {
-  name: 'DrawingCanvas',
-  components: {
-    ...VueKonva
-  },
-  data() {
-    return {
-      isSelectionEnabled: false, // 是否启用选择功能
-      isDrawing: false, // 是否正在绘制
-      isErasing: false, // 是否正在擦除
-      isCompassing: false, // 是否正在画圆
-      isQuadrilateralDrawing: false, //  是否正在画四边形
-      isIntellect: false, //是否智能识别
-      isMouseDown: false, // 是否鼠标按下
-      stageConfig: {
-        width: window.innerWidth,
-        height: window.innerHeight
-      },
-      showBrushOptions: false, //    是否显示画笔选项
-      brushWidth: 5, // 画笔宽度
-      selectColor: '#000000', // 画笔颜色
-      rectangles: [
-        {
-          x: window.innerWidth / 2 - 60,
-          y: window.innerHeight / 2 - 60,
-          width: 0,
-          height: 0,
-          fill: 'red',
-          draggable: false,
-          id: 'rect1',
-          name: 'my-rect'
-        },
-        {
-          x: window.innerWidth / 2 + 10,
-          y: window.innerHeight / 2 + 10,
-          width: 0,
-          height: 0,
-          fill: 'green',
-          draggable: false,
-          id: 'rect2',
-          name: 'my-rect'
-        }
-      ],
-      transformerConfig: {
-        nodes: [],
-        rotateEnabled: true,
-        resizeEnabled: true,
-        keepRatio: false, // 文字允许自由缩放
-        enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
-        boundBoxFunc: (oldBox, newBox) => {
-          // 限制最小尺寸
-          if (newBox.width < 30 || newBox.height < 30) {
-            return oldBox
-          }
-          return newBox
-        }
-      },
-      selectedItems: [], //选中的元素
-      drawnLines: [], //绘制的线条
-      intellectLines: [], // 新增：智能识别后的线条
-      drawnCircles: [], //绘制的圆
-      drawnQuadrilaterals: [], //绘制的四边形
-      currentLinePoints: [], //当前线条的坐标点
-      currentCircleCenter: null, //当前圆的中心点
-      currentCircleRadius: 0, //当前圆的半径
-      lineIdCounter: 0, //线条id计数器
-      circleIdCounter: 0, //圆id计数器
-      quadrilateralIdCounter: 0, // 四边形id计数器
-      currentQuadrilateral: null, //当前四边形
-      isDragging: false, //是否正在拖动
-      dragStartPos: null, //拖动开始的位置
-      historyStack: [], //历史记录
-      AllPoints: [], //所有线条的坐标点
-      currentLineTimestamps: [], //当前线条的时间戳
-      recoData: '', //获取识别以后返回的html
-      debounceTimer: null, // 防抖定时器
-      lastDrawTime: 0, // 上次绘制的时间
-      exportConfig: {
-        quality: 0.8,// 图片质量 0-1
-        pixelRatio: 2,// 提高分辨率
-        mimeType: 'image/png'//格式
-      }
-    }
-  },
-  mounted() {
-    this.$nextTick(() => {
-      const transformer = this.$refs.transformerRef.getNode()
-      transformer.boundBoxFunc(this.boundBoxFunc)
-    })
-    window.addEventListener('resize', this.handleResize)
-    this.saveState()
-  },
-  beforeDestroy() {
-    // 移除事件监听器
-    window.removeEventListener('resize', this.handleResize)
-  },
-  methods: {
-    // 点击保存生成图片
-    saveCanvas() {
-      const stage = this.$refs.stageRef.getNode()
-      const dataURL = stage.toDataURL({
-        quality: 0.8, // 图片质量 0-1
-        pixelRatio: 2 // 提高分辨率
-      })
+<script setup>
+import {
+  ref,
+  reactive,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  watch,
+} from "vue";
+import useRecognizer from "../utils/useRecognizer";
 
-      // 创建下载链接
-      const link = document.createElement('a')
-      link.download = `whiteboard-${Date.now()}.png`
-      link.href = dataURL
+import eventBus from "../utils/eventBus";
+// import Hammer from "hammerjs";
+// 响应式数据
+const state = reactive({
+  isManualEraser: false, // 新增手动擦除标志
+  isSelectionEnabled: false,
+  isDrawing: false,
+  isErasing: false,
+  isCompassing: false,
+  isQuadrilateralDrawing: false, // 四边形绘制状态
+  isIntellect: false, // 智能识别状态
+  isMouseDown: false, // 鼠标按下状态
+  stageConfig: {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  },
+  showBrushOptions: false,
+  brushWidth: 5,
+  selectColor: "#000000",
+  rectangles: [
+    {
+      x: window.innerWidth / 2 - 60,
+      y: window.innerHeight / 2 - 60,
+      width: 0,
+      height: 0,
+      fill: "red",
+      draggable: false,
+      id: "rect1",
+      name: "my-rect",
+    },
+    {
+      x: window.innerWidth / 2 + 10,
+      y: window.innerHeight / 2 + 10,
+      width: 0,
+      height: 0,
+      fill: "green",
+      draggable: false,
+      id: "rect2",
+      name: "my-rect",
+    },
+  ],
+  transformerConfig: {
+    nodes: [],
+    rotateEnabled: true,
+    resizeEnabled: true,
+    keepRatio: true,
+    enabledAnchors: ["top-left", "top-right", "bottom-left", "bottom-right"],
+    boundBoxFunc: (oldBox, newBox) => {
+      if (newBox.width < 30 || newBox.height < 30) {
+        return oldBox;
+      }
+      return newBox;
+    },
+  },
+  selectedItems: [],
+  drawnLines: [], // 存储所有的线条和文字
+  intellectLines: [],
+  drawnCircles: [],
+  drawnQuadrilaterals: [],
+  currentLinePoints: [],
+  currentCircleCenter: null,
+  currentCircleRadius: 0,
+  lineIdCounter: 0,
+  circleIdCounter: 0,
+  quadrilateralIdCounter: 0,
+  currentQuadrilateral: null,
+  isDragging: false, // 拖动状态
+  dragStartPos: null,
+  historyStack: [],
+  AllPoints: [],
+  currentLineTimestamps: [],
+  recoData: "",
+  debounceTimer: null,
+  lastDrawTime: 0,
+  maxFingerCount: 0,
+  exportConfig: {
+    quality: 0.8,
+    pixelRatio: 2,
+    mimeType: "image/png",
+  },
+});
 
-      // 触发下载
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-    },
-    //挪动文字以后记录位置
-    handleDragEnd(e) {
-      const textNode = e.target
-      const textItem = this.drawnLines.find((t) => t.id === textNode.id())
-      if (textItem && textItem.type === 'text') {
-        // 更新文字位置
-        textItem.x = textNode.x()
-        textItem.y = textNode.y()
-        this.saveState()
-        // 更新变换器位置
-        this.updateTransformerNodes()
+// 组件引用
+const isVirtualCursorVisible = ref(false); // 虚拟光标可见性
+const virtualCursor = ref(null); // 虚拟光标元素
+const touchArea = ref(null);
+const fingerCount = ref(0);
+const stageRef = ref(null);
+const transformerRef = ref(null);
+const activedBol = ref(true);
+const drawnLinesBol = ref(false);
+const recoing = ref(false);
+const eraserUrl = new URL("./eraser.png", import.meta.url).href;
+const handleActive = (val) => {
+  activedBol.value = val;
+};
+
+
+// 生命周期钩子
+onMounted(() => {
+  eventBus.on("child-active", handleActive);
+  nextTick(() => {
+    if (!transformerRef.value) return;
+    const transformer = transformerRef.value.getNode();
+    transformer.boundBoxFunc(state.transformerConfig.boundBoxFunc);
+  });
+  window.addEventListener("resize", handleResize);
+  saveState();
+  stageRef.value.getStage().container().style.cursor = "default";
+
+  if (stageRef.value) {
+    // const stageContainer = stageRef.value.getStage().container();
+    // const mc = new Hammer(stageContainer, {
+    //   recognizers: [
+    //     // [Hammer.Pinch, { enable: true }],
+    //     // [Hammer.Pan, { enable: true }]
+    //     [
+    //       Hammer.Pinch,
+    //       {
+    //         enable: true,
+    //         threshold: 0, // 降低 pinch 手势的识别阈值
+    //       },
+    //     ],
+    //     [
+    //       Hammer.Pan,
+    //       {
+    //         enable: true,
+    //         threshold: 0, // 降低 pan 手势的识别阈值
+    //       },
+    //     ],
+    //   ],
+    // });
+    // console.log("mc", mc);
+
+    // mc.on("pinch", (event) => {
+    //   console.log("pinch", event);
+
+    //   fingerCount.value = event.pointers.length;
+    //   console.log("手指数量pinch", fingerCount.value);
+    // });
+
+    // mc.on("pan", (event) => {
+    //   fingerCount.value = event.pointers.length;
+    //   console.log("手指数量pan", fingerCount.value);
+    // });
+
+    //  const stageContainer = stageRef.value.getStage().container();
+    // stageContainer.addEventListener('touchstart', (e) => {
+    //     const fingerCount = e.touches.length;
+    //     console.log("原生 touchstart 事件手指数量", fingerCount);
+    // });
+    // stageContainer.addEventListener('touchmove', (e) => {
+    //     const fingerCount = e.touches.length;
+    //     console.log("原生 touchmove 事件手指数量", fingerCount);
+    // });
+    // stageContainer.addEventListener('touchend', (e) => {
+    //     const fingerCount = e.touches.length;
+    //     console.log("原生 touchend 事件手指数量", fingerCount);
+    // });
+
+    const stageContainer = stageRef.value.getStage().container();
+    state.maxFingerCount = 0;
+
+    stageContainer.addEventListener("touchstart", (e) => {
+      const currentFingerCount = e.touches.length;
+      // 更新最大手指数量
+      if (currentFingerCount > state.maxFingerCount) {
+        state.maxFingerCount = currentFingerCount;
       }
-    },
-    // 文字点击处理
-    handleTextClick(text) {
-      if (this.isSelectionEnabled) {
-        const index = this.selectedItems.indexOf(text)
-        if (index === -1) {
-          this.selectedItems.push(text)
-        } else {
-          this.selectedItems.splice(index, 1)
-        }
-        this.updateTransformerNodes()
-      }
-    },
-    // 点击智能识别  保留画笔功能
-    async logAllPoints() {
-      this.isIntellect = !this.isIntellect
-      this.isDrawing = this.isIntellect
-      this.isSelectionEnabled = false
-      this.isErasing = false
-      this.isCompassing = false
-      this.isQuadrilateralDrawing = false
-      this.isMouseDown = false
-      if (!this.isDrawing) {
-        this.currentLinePoints = []
-      }
-      if (this.isIntellect) {
-        this.currentLinePoints = []
-      }
-      this.showBrushOptions = this.isDrawing
-      // const recognizer = useRecognizer()
-      // this.AllPoints = []
-      // this.drawnLines.forEach((line, index) => {
-      //   const points = []
-      //   for (let i = 0; i < line.points.length; i += 2) {
-      //     points.push({
-      //       x: line.points[i],
-      //       y: line.points[i + 1],
-      //       t: line.timestamps[i / 2],
-      //       p: this.brushWidth
-      //     })
-      //   }
-      //   this.AllPoints.push({
-      //     id: line.id,
-      //     stroke: line.stroke,
-      //     pointerType: 'pen',
-      //     length: 100,
-      //     creationTime: 1,
-      //     modificationDate: 1,
-      //     style: {
-      //       width: 1
-      //     },
-      //     type: 'stroke',
-      //     pointers: points,
-      //     pointCount: points.length
-      //   })
-      // })
-      // try {
-      //   const result = await recognizer.send(this.AllPoints, 'zh').then((res) => {
-      //     console.log(res,'resreds');
-      //     this.recoData = res
-      //   })
-      //   console.log('识别结果:', result)
-      // } catch (error) {
-      //   console.error('识别失败:', error)
+      // console.log("当前触摸手指数量", currentFingerCount);
+      // if (state.maxFingerCount === 4) {
+      //   toggleEraser();
+      //   handleMouseMove();
       // }
-    },
-    setBrushColor(color) {
-      this.selectColor = color
-    },
-    setBrushWidth(width) {
-      this.brushWidth = width
-    },
-    clearScreen() {
-      this.rectangles = []
-      this.drawnLines = []
-      this.drawnCircles = []
-      this.drawnQuadrilaterals = []
-      this.AllPoints = []
-      this.saveState()
-    },
-    toggleSelection() {
-      this.isSelectionEnabled = !this.isSelectionEnabled
-      if (!this.isSelectionEnabled) {
-        this.selectedItems = []
-        const transformer = this.$refs.transformerRef.getNode()
-        transformer.nodes([])
-      }
-      this.isDrawing = false
-      this.isErasing = false
-      this.isCompassing = false
-      this.isQuadrilateralDrawing = false
-      this.isMouseDown = false
-      this.isIntellect = false
-    },
-    toggleDrawing() {
-      this.isDrawing = !this.isDrawing
-      this.isSelectionEnabled = false
-      this.isErasing = false
-      this.isCompassing = false
-      this.isQuadrilateralDrawing = false
-      this.isMouseDown = false
-      this.isIntellect = false
-      if (!this.isDrawing) {
-        this.currentLinePoints = []
-      }
-      this.showBrushOptions = this.isDrawing
-    },
-    toggleEraser() {
-      this.isErasing = !this.isErasing
-      this.isSelectionEnabled = false
-      this.isDrawing = false
-      this.isCompassing = false
-      this.isQuadrilateralDrawing = false
-      this.isMouseDown = false
-      this.isIntellect = false
-    },
-    toggleCompass() {
-      this.isCompassing = !this.isCompassing
-      this.isSelectionEnabled = false
-      this.isDrawing = false
-      this.isErasing = false
-      this.isQuadrilateralDrawing = false
-      this.isMouseDown = false
-      this.currentCircleCenter = null
-      this.currentCircleRadius = 0
-      this.isIntellect = false
-    },
-    toggleQuadrilateral() {
-      console.log(this.drawnLines, 'drawnLines')
-      this.isQuadrilateralDrawing = !this.isQuadrilateralDrawing
-      this.isSelectionEnabled = false
-      this.isDrawing = false
-      this.isErasing = false
-      this.isCompassing = false
-      this.isMouseDown = false
-      this.isIntellect = false
-      this.currentLinePoints = []
-    },
-    handleRectClick(rect) {
-      if (this.isSelectionEnabled) {
-        const index = this.selectedItems.indexOf(rect)
-        if (index === -1) {
-          this.selectedItems.push(rect)
-        } else {
-          this.selectedItems.splice(index, 1)
-        }
-        this.updateTransformerNodes()
-      }
-    },
-    handleLineClick(line) {
-      if (this.isSelectionEnabled) {
-        const index = this.selectedItems.indexOf(line)
-        if (index === -1) {
-          this.selectedItems.push(line)
-        } else {
-          this.selectedItems.splice(index, 1)
-        }
-        this.updateTransformerNodes()
-      }
-    },
-    handleCircleClick(circle) {
-      if (this.isSelectionEnabled) {
-        const index = this.selectedItems.indexOf(circle)
-        if (index === -1) {
-          this.selectedItems.push(circle)
-        } else {
-          this.selectedItems.splice(index, 1)
-        }
-        this.updateTransformerNodes()
-      }
-    },
-    handleQuadrilateralClick(quadrilateral) {
-      if (this.isSelectionEnabled) {
-        const index = this.selectedItems.indexOf(quadrilateral)
-        if (index === -1) {
-          this.selectedItems.push(quadrilateral)
-        } else {
-          this.selectedItems.splice(index, 1)
-        }
-        this.updateTransformerNodes()
-      }
-    },
-    isRectSelected(rect) {
-      return this.selectedItems.includes(rect)
-    },
-    isLineSelected(line) {
-      return this.selectedItems.includes(line)
-    },
-    isCircleSelected(circle) {
-      return this.selectedItems.includes(circle)
-    },
-    isQuadrilateralSelected(quadrilateral) {
-      return this.selectedItems.includes(quadrilateral)
-    },
-    getCorner(pivotX, pivotY, diffX, diffY, angle) {
-      const distance = Math.sqrt(diffX * diffX + diffY * diffY)
-      angle += Math.atan2(diffY, diffX)
-      const x = pivotX + distance * Math.cos(angle)
-      const y = pivotY + distance * Math.sin(angle)
-      return { x, y }
-    },
-    getClientRect(rotatedBox) {
-      const { x, y, width, height } = rotatedBox
-      const rad = rotatedBox.rotation || 0
-      const p1 = this.getCorner(x, y, 0, 0, rad)
-      const p2 = this.getCorner(x, y, width, 0, rad)
-      const p3 = this.getCorner(x, y, width, height, rad)
-      const p4 = this.getCorner(x, y, 0, height, rad)
-      const minX = Math.min(p1.x, p2.x, p3.x, p4.x)
-      const minY = Math.min(p1.y, p2.y, p3.y, p4.y)
-      const maxX = Math.max(p1.x, p2.x, p3.x, p4.x)
-      const maxY = Math.max(p1.y, p2.y, p3.y, p4.y)
-      return {
-        x: minX,
-        y: minY,
-        width: maxX - minX,
-        height: maxY - minY
-      }
-    },
-    getTotalBox(boxes) {
-      let minX = Infinity
-      let minY = Infinity
-      let maxX = -Infinity
-      let maxY = -Infinity
-      boxes.forEach((box) => {
-        minX = Math.min(minX, box.x)
-        minY = Math.min(minY, box.y)
-        maxX = Math.max(maxX, box.x + box.width)
-        maxY = Math.max(maxY, box.y + box.height)
-      })
-      return {
-        x: minX,
-        y: minY,
-        width: maxX - minX,
-        height: maxY - minY
-      }
-    },
-    boundBoxFunc(oldBox, newBox) {
-      const box = this.getClientRect(newBox)
-      const isOut =
-        box.x < 0 ||
-        box.y < 0 ||
-        box.x + box.width > this.stageConfig.width ||
-        box.y + box.height > this.stageConfig.height
-      if (isOut) {
-        return oldBox
-      }
-      return newBox
-    },
-    handleRectDragMove(e) {
-      const node = e.target
-      const newX = node.x()
-      const newY = node.y()
-      const rectConfig = this.rectangles.find((rect) => rect.id === node.id())
-      if (rectConfig) {
-        rectConfig.x = newX
-        rectConfig.y = newY
-      }
-    },
-    handleTransformStart() {
-      // 可以在这里添加变换开始时的逻辑
-    },
-    handleTransformEnd() {
-      this.saveState()
-      // 可以在这里添加变换结束时的逻辑
-    },
-    handleResize() {
-      this.stageConfig.width = window.innerWidth
-      this.stageConfig.height = window.innerHeight
-    },
-    handleMouseDown(e) {
-      this.showBrushOptions = false
-      if (this.isSelectionEnabled && this.selectedItems.length > 0) {
-        const pos = e.target.getStage().getPointerPosition()
-        const transformer = this.$refs.transformerRef.getNode()
-        const box = this.getTotalBox(transformer.nodes().map((node) => node.getClientRect()))
-        if (
-          pos.x >= box.x &&
-          pos.x <= box.x + box.width &&
-          pos.y >= box.y &&
-          pos.y <= box.y + box.height
-        ) {
-          this.isDragging = true
-          this.dragStartPos = pos
-        }
-      }
-      if (this.isDrawing) {
-        const pos = e.target.getStage().getPointerPosition()
-        this.currentLinePoints = [pos.x, pos.y]
-      }
-      if (this.isErasing) {
-        this.isMouseDown = true
-      }
-      if (this.isCompassing) {
-        const pos = e.target.getStage().getPointerPosition()
-        this.currentCircleCenter = pos
-      }
-      if (this.isQuadrilateralDrawing) {
-        const pos = e.target.getStage().getPointerPosition()
-        this.currentLinePoints = [pos.x, pos.y]
-      }
-    },
-    handleMouseMove(e) {
-      if (this.isDragging) {
-        const pos = e.target.getStage().getPointerPosition()
-        const dx = pos.x - this.dragStartPos.x
-        const dy = pos.y - this.dragStartPos.y
-        const transformer = this.$refs.transformerRef.getNode()
-        const nodes = transformer.nodes()
-        nodes.forEach((node) => {
-          const newX = node.x() + dx
-          const newY = node.y() + dy
-          node.position({ x: newX, y: newY })
-        })
-        this.dragStartPos = pos
-      }
-      if (this.isDrawing && this.currentLinePoints.length > 0) {
-        const pos = e.target.getStage().getPointerPosition()
-        this.currentLinePoints = [...this.currentLinePoints, pos.x, pos.y]
-        this.currentLineTimestamps.push(Date.now())
-      }
-      if (this.isErasing && this.isMouseDown) {
-        const pos = e.target.getStage().getPointerPosition()
-        this.rectangles = this.rectangles.filter((rect) => {
-          return (
-            pos.x < rect.x ||
-            pos.x > rect.x + rect.width ||
-            pos.y < rect.y ||
-            pos.y > rect.y + rect.height
-          )
-        })
-        this.drawnLines = this.drawnLines.flatMap((line) => {
-          const lineNode = this.$refs.transformerRef.getNode().getStage().findOne(`#${line.id}`)
-          if (!lineNode) return []
-          // 缺少对文字元素的处理 ↓↓↓
-          if (line.type === 'text') {
-            // 计算文字边界框
-            const textWidth = line.text.length * line.fontSize * 0.6 // 估算文字宽度
-            const textHeight = line.fontSize
-            // 检查是否在擦除区域内
-            if (
-              pos.x >= line.x &&
-              pos.x <= line.x + textWidth &&
-              pos.y >= line.y &&
-              pos.y <= line.y + textHeight
-            ) {
-              return [] // 擦除该文字
-            }
-            return [line] // 保留未擦到的文字
-          }
-          const transform = lineNode.getAbsoluteTransform().copy()
-          transform.invert()
-          const localPos = transform.point(pos)
-          const segments = []
-          let currentSegment = []
-          for (let i = 0; i < line.points.length; i += 2) {
-            const x = line.points[i]
-            const y = line.points[i + 1]
-            const distance = this.pointToLineDistance(
-              localPos.x,
-              localPos.y,
-              x,
-              y,
-              line.points[i + 2] || x,
-              line.points[i + 3] || y
-            )
-            if (distance > 10) {
-              currentSegment.push(x, y)
-            } else if (currentSegment.length > 0) {
-              segments.push([...currentSegment])
-              currentSegment = []
-            }
-          }
-          if (currentSegment.length > 0) {
-            segments.push(currentSegment)
-          }
-          return segments.map((points) => ({
-            ...line,
-            points,
-            id: `${line.id}-${Math.random().toString(36).substr(2, 5)}`
-          }))
-        })
-        this.drawnCircles = this.drawnCircles.filter((circle) => {
-          const distance = Math.sqrt((pos.x - circle.x) ** 2 + (pos.y - circle.y) ** 2)
-          return distance > circle.radius + this.brushWidth / 2
-        })
-        this.drawnQuadrilaterals = this.drawnQuadrilaterals.filter((quad) => {
-          const startX = quad.x
-          const startY = quad.y
-          const endX = quad.x + quad.width
-          const endY = quad.y + quad.height
-          return !(
-            pos.x >= Math.min(startX, endX) &&
-            pos.x <= Math.max(startX, endX) &&
-            pos.y >= Math.min(startY, endY) &&
-            pos.y <= Math.max(startY, endY)
-          )
-        })
-      }
-      if (this.isCompassing && this.currentCircleCenter) {
-        const pos = e.target.getStage().getPointerPosition()
-        this.currentCircleRadius = Math.sqrt(
-          (pos.x - this.currentCircleCenter.x) ** 2 + (pos.y - this.currentCircleCenter.y) ** 2
-        )
-      }
-      if (this.isQuadrilateralDrawing && this.currentLinePoints.length > 0) {
-        const pos = e.target.getStage().getPointerPosition()
-        const startX = this.currentLinePoints[0]
-        const startY = this.currentLinePoints[1]
-        this.currentQuadrilateral = {
-          x: Math.min(startX, pos.x),
-          y: Math.min(startY, pos.y),
-          width: Math.abs(pos.x - startX),
-          height: Math.abs(pos.y - startY),
-          stroke: this.selectColor,
-          strokeWidth: this.brushWidth,
-          fill: 'transparent',
-          id: `temp-quad-${Date.now()}`
-        }
-      }
-    },
-    handleMouseUp(e) {
-      if (this.isDragging) {
-        const transformer = this.$refs.transformerRef.getNode()
-        const nodes = transformer.nodes()
-        // if (!nodes.length) return
-        // const boxes = nodes.map((node) => node.getClientRect())
-        // const box = this.getTotalBox(boxes)
-        // const pos = e.target.getStage().getPointerPosition()
-        // const dx = pos.x - this.dragStartPos.x
-        // const dy = pos.y - this.dragStartPos.y
-        // nodes.forEach((shape) => {
-        //   const absPos = shape.getAbsolutePosition()
-        //   const offsetX = box.x - absPos.x
-        //   const offsetY = box.y - absPos.y
-        //   const newAbsPos = { x: absPos.x, y: absPos.y }
-        //   if (box.x < 0) {
-        //     newAbsPos.x = -offsetX
-        //   }
-        //   if (box.y < 0) {
-        //     newAbsPos.y = -offsetY
-        //   }
-        //   if (box.x + box.width > this.stageConfig.width) {
-        //     newAbsPos.x = this.stageConfig.width - box.width - offsetX
-        //   }
-        //   if (box.y + box.height > this.stageConfig.height) {
-        //     newAbsPos.y = this.stageConfig.height - box.height - offsetY
-        //   }
-        //   shape.setAbsolutePosition(newAbsPos)
-        //   if (shape.getClassName() === 'Line') {
-        //     const line = this.drawnLines.find((l) => l.id === shape.id())
-        //     if (line) {
-        //       const transform = shape.getAbsoluteTransform()
-        //       const points = shape.points()
-        //       const transformedPoints = []
-        //       for (let i = 0; i < points.length; i += 2) {
-        //         const point = transform.point({
-        //           x: points[i],
-        //           y: points[i + 1]
-        //         })
-        //         transformedPoints.push(point.x, point.y)
-        //       }
-        //       line.points = transformedPoints
-        //       line.x = shape.x()
-        //       line.y = shape.y()
-        //       line.rotation = shape.rotation()
-        //       line.scaleX = shape.scaleX()
-        //       line.scaleY = shape.scaleY()
-        //     }
-        //   }
-        // })
-        nodes.forEach((shape) => {
-          console.log(shape, 'shapeshapeshapeshapeshape')
+    });
 
-          if (shape.getClassName() === 'Line') {
-            const line = this.drawnLines.find((l) => l.id === shape.id())
-            if (line) {
-              // 获取绝对位置和变换矩阵
-              const absPos = shape.getAbsolutePosition()
-              const scaleX = shape.scaleX()
-              const scaleY = shape.scaleY()
-              const rotation = shape.rotation()
-
-              // 重置变换属性避免重复计算
-              shape.scaleX(1)
-              shape.scaleY(1)
-              shape.rotation(0)
-
-              // 直接获取相对坐标点
-              line.points = shape.points()
-              line.x = absPos.x
-              line.y = absPos.y
-
-              // 还原变换属性
-              shape.scaleX(scaleX)
-              shape.scaleY(scaleY)
-              shape.rotation(rotation)
-            }
-          }
-        })
-        this.saveState()
-        this.isDragging = false
+    stageContainer.addEventListener("touchmove", (e) => {
+      const currentFingerCount = e.touches.length;
+      if (currentFingerCount === 4) {
+        toggleEraser();
+        state.isErasing = true; // 直接设置为true
+        state.isManualEraser = false; // 标记为自动擦除模式
+        const touch = e.touches[0];
+        const pos = stageRef.value.getStage().getPointerPosition(touch);
+        updateVirtualCursorPosition(pos);
+        handleMouseMove({
+          target: stageRef.value.getStage(),
+          evt: e,
+        });
+      } else if (!state.isManualEraser) {
+        state.isErasing = false;
       }
-      this.isMouseDown = false
-      this.isDragging = false
-      if (this.isDrawing && this.currentLinePoints.length > 0) {
-        const newLine = {
-          points: this.currentLinePoints,
-          stroke: this.selectColor,
-          strokeWidth: this.brushWidth,
-          tension: 0.5,
-          id: `line-${this.lineIdCounter++}`,
-          timestamps:
-            this.currentLineTimestamps.length === this.currentLinePoints.length / 2
-              ? this.currentLineTimestamps
-              : Array(this.currentLinePoints.length / 2)
-                  .fill()
-                  .map((_, i) => Date.now() + i)
+    }),
+      stageContainer.addEventListener("touchend", (e) => {
+        const remainingFingerCount = e.touches.length;
+        if (remainingFingerCount === 0) {
+          // 所有手指都已抬起，输出最大手指数量
+          // if(state.maxFingerCount === 4){
+          //   toggleEraser()
+          // }
+          emit("fingerCountChange", state.maxFingerCount);
+          console.log("最大手指数量", state.maxFingerCount);
+          // 重置最大手指数量
+          state.maxFingerCount = 0;
         }
-        if (this.isIntellect) {
-          this.AllPoints = [] // 清空之前的智能识别线条
-          // 把点击智能识别以后的线条存起来
-          this.intellectLines.push(newLine)
-          this.drawnLines.push(newLine)
-          // 存储当前智能识别线条的ID集合
-          const tempLineIds = new Set(this.intellectLines.map((line) => line.id))
-          const currentLines = [...this.intellectLines]
-          const currentWidth = this.brushWidth
-          // 清除之前的定时器
-          clearTimeout(this.debounceTimer)
-          // 记录最后绘制时间
-          this.lastDrawTime = Date.now()
-          this.debounceTimer = setTimeout(async () => {
-            // 检查2秒内是否有新绘制
-            if (Date.now() - this.lastDrawTime < 1000) return
+      });
+  }
+});
 
-            try {
-              const recognizer = useRecognizer()
-              this.AllPoints = []
-              currentLines.forEach((line, index) => {
-                // 判断线条是否存在 || 判断是否缺少坐标点
-                if (!line.points || line.points.length % 2 !== 0) return
-                const points = []
-                for (let i = 0; i < line.points.length; i += 2) {
-                  points.push({
-                    x: line.points[i],
-                    y: line.points[i + 1],
-                    t: line.timestamps[i / 2],
-                    p: currentWidth
-                  })
-                }
-                this.AllPoints.push({
-                  id: line.id,
-                  stroke: line.stroke,
-                  pointerType: 'pen',
-                  length: 100,
-                  creationTime: 1,
-                  modificationDate: 1,
-                  style: {
-                    width: 1
-                  },
-                  type: 'stroke',
-                  pointers: points,
-                  pointCount: points.length
-                })
-              })
-              console.log(this.AllPoints, 'this.AllPoints')
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", handleResize);
+});
+const getDrawnLines = () => {
+  return state.drawnLines.length > 0;
+};
+const open = () => {
+  const magnifier = new HTMLMagnifier({
+    zoom: 2,
+    shape: "circle",
+    width: 300,
+    height: 300,
+  });
+  magnifier.show();
+};
+// 方法定义
+const saveCanvas = () => {
+  const stage = stageRef.value.getNode();
+  const dataURL = stage.toDataURL({
+    quality: state.exportConfig.quality,
+    pixelRatio: state.exportConfig.pixelRatio,
+  });
 
-              await recognizer.send(this.AllPoints, 'zh').then((res) => {
-                console.log(res, 'resreds')
-                try {
-                  const result = typeof res === 'string' ? JSON.parse(res) : res
-                  this.recoData = result
-                  this.createTextElements(result) // 传递解析后的结果
-                  // 识别成功后移除临时线条
-                  this.drawnLines = this.drawnLines.filter((line) => !tempLineIds.has(line.id))
-                  this.saveState()
-                  this.intellectLines = [] // 清空智能识别线条
-                } catch (error) {
-                  console.error('解析识别结果失败:', error)
-                }
-                // this.recoData = res
-                // // 新增：创建文字元素
-                // this.createTextElements(res)
-                // // 新增：识别成功后移除临时线条
-                // this.drawnLines = this.drawnLines.filter((line) => !tempLineIds.has(line.id))
-                // this.saveState()
-              })
-              // console.log('识别结果:', result)
-            } catch (error) {
-              console.error('识别失败:', error)
-            }
-          }, 1000)
-        } else {
-          this.drawnLines.push(newLine)
-        }
-        // this.drawnLines.push(newLine)
-        this.currentLineTimestamps = []
-        this.currentLinePoints = []
-        this.saveState()
-      }
-      if (this.isCompassing && this.currentCircleCenter && this.currentCircleRadius > 0) {
-        const newCircle = {
-          x: this.currentCircleCenter.x,
-          y: this.currentCircleCenter.y,
-          radius: this.currentCircleRadius,
-          stroke: this.selectColor,
-          strokeWidth: this.brushWidth,
-          fill: 'transparent',
-          id: `circle-${this.circleIdCounter++}`
-        }
-        this.drawnCircles.push(newCircle)
-        this.currentCircleCenter = null
-        this.currentCircleRadius = 0
-        this.saveState()
-      }
-      if (this.isErasing) {
-        this.saveState()
-      }
-      if (this.isQuadrilateralDrawing && this.currentLinePoints.length > 0) {
-        this.drawnQuadrilaterals.push({
-          ...this.currentQuadrilateral,
-          id: `quadrilateral-${this.quadrilateralIdCounter}`
-        })
-        this.quadrilateralIdCounter++
-        this.currentLinePoints = []
-        this.currentQuadrilateral = null
-        this.saveState()
-      }
-    },
-    // 新增方法：创建文字元素
-    createTextElements(recoData) {
-      // 添加数据格式校验
-      if (!Array.isArray(recoData)) {
-        console.error('无效的识别数据格式:', recoData)
-        return
-      }
-      recoData.forEach((item, index) => {
-        const correspondingLine = this.intellectLines[index]
-        if (correspondingLine && correspondingLine.points.length > 0) {
-          const [x, y] = correspondingLine.points
-          // 通过坐标点计算包围盒
-          let minX = Infinity,
-            minY = Infinity,
-            maxX = -Infinity,
-            maxY = -Infinity
-          correspondingLine.points.forEach((val, i) => {
-            if (i % 2 === 0) {
-              // x坐标
-              minX = Math.min(minX, val)
-              maxX = Math.max(maxX, val)
-            } else {
-              // y坐标
-              minY = Math.min(minY, val)
-              maxY = Math.max(maxY, val)
-            }
-          })
-          const fontSize = Math.max(
-            // 24, // 最小字号
-            Math.max(
-              (maxY - minY) * 1.5, // 根据高度计算
-              (maxX - minX) * 1.5 // 根据宽度计算
-            )
-          )
-          console.log(fontSize, 'fontSizefontSizefontSize')
+  const link = document.createElement("a");
+  link.download = `whiteboard-${Date.now()}.png`;
+  link.href = dataURL;
 
-          this.drawnLines.push({
-            type: 'text',
-            text: item.label,
-            x,
-            y: y - 20,
-            fontSize: fontSize,
-            fill: this.selectColor,
-            id: `text-${Date.now()}-${index}`
-          })
-        }
-      })
-    },
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
 
-    updateTransformerNodes() {
-      const transformer = this.$refs.transformerRef.getNode()
-      const nodes = this.selectedItems.map((item) => {
-        const node = transformer.getStage().findOne(`#${item.id}`)
-        if (node && item.type === 'text') {
-          // 重置缩放比例以保证文字清晰
-          node.scaleX(1)
-          node.scaleY(1)
-        }
-        return node
-        // return transformer.getStage().findOne(`#${item.id}`)
-      })
-      transformer.nodes(nodes.filter((n) => n)) // 过滤空节点
-      // transformer.nodes(nodes)
-    },
-    pointToLineDistance(x, y, x1, y1, x2, y2) {
-      const A = x - x1
-      const B = y - y1
-      const C = x2 - x1
-      const D = y2 - y1
-      const dot = A * C + B * D
-      const len_sq = C * C + D * D
-      let param = -1
-      if (len_sq !== 0) {
-        param = dot / len_sq
-      }
-      let xx, yy
-      if (param < 0) {
-        xx = x1
-        yy = y1
-      } else if (param > 1) {
-        xx = x2
-        yy = y2
-      } else {
-        xx = x1 + param * C
-        yy = y1 + param * D
-      }
-      const dx = x - xx
-      const dy = y - yy
-      return Math.sqrt(dx * dx + dy * dy)
-    },
-    saveState() {
-      const currentState = {
-        rectangles: [...this.rectangles],
-        drawnLines: [...this.drawnLines],
-        drawnCircles: [...this.drawnCircles],
-        drawnQuadrilaterals: [...this.drawnQuadrilaterals]
-      }
-      this.historyStack.push(currentState)
-    },
-    undo() {
-      if (this.historyStack.length > 1) {
-        this.historyStack.pop()
-        const previousState = this.historyStack[this.historyStack.length - 1]
-        this.rectangles = [...previousState.rectangles]
-        this.drawnLines = [...previousState.drawnLines]
-        this.drawnCircles = [...previousState.drawnCircles]
-        this.drawnQuadrilaterals = [...previousState.drawnQuadrilaterals]
-      }
+const handleDragEnd = (e) => {
+  const textNode = e.target;
+  const textItem = state.drawnLines.find((t) => t.id === textNode.id());
+  if (textItem && textItem.type === "text") {
+    textItem.x = textNode.x();
+    textItem.y = textNode.y();
+    saveState();
+    updateTransformerNodes();
+  }
+};
+
+const handleTextClick = (text) => {
+  if (state.isSelectionEnabled) {
+    const index = state.selectedItems.indexOf(text);
+    if (index === -1) {
+      state.selectedItems.push(text);
+    } else {
+      state.selectedItems.splice(index, 1);
+    }
+    updateTransformerNodes();
+  }
+};
+
+const logAllPoints = async () => {
+  state.isIntellect = !state.isIntellect;
+  state.isDrawing = state.isIntellect;
+  state.isSelectionEnabled = false;
+  state.isErasing = false;
+  state.isCompassing = false;
+  state.isQuadrilateralDrawing = false;
+  state.isMouseDown = false;
+  if (!state.isDrawing) {
+    state.currentLinePoints = [];
+  }
+  if (state.isIntellect) {
+    state.currentLinePoints = [];
+  }
+  state.showBrushOptions = state.isDrawing;
+};
+
+const setBrushColor = (color) => {
+  state.selectColor = color;
+};
+
+const setBrushWidth = (width) => {
+  state.brushWidth = width;
+};
+
+const clearScreen = () => {
+  state.rectangles = [];
+  state.drawnLines = [];
+  state.drawnCircles = [];
+  state.drawnQuadrilaterals = [];
+  state.AllPoints = [];
+  saveState();
+};
+
+const toggleSelection = () => {
+  state.isSelectionEnabled = !state.isSelectionEnabled;
+  if (!state.isSelectionEnabled) {
+    state.selectedItems = [];
+    if (transformerRef.value) {
+      const transformer = transformerRef.value.getNode();
+      transformer.nodes([]);
     }
   }
-}
+  state.isDrawing = false;
+  state.isErasing = false;
+  state.isCompassing = false;
+  state.isQuadrilateralDrawing = false;
+  state.isMouseDown = false;
+  state.isIntellect = false;
+  isVirtualCursorVisible.value = false;
+};
+
+const toggleDrawing = () => {
+  state.isDrawing = true;
+  state.isSelectionEnabled = false;
+  state.isErasing = false;
+  state.isCompassing = false;
+  state.isQuadrilateralDrawing = false;
+  state.isMouseDown = false;
+  state.isIntellect = false;
+  const container = stageRef.value.getStage().container();
+  container.style.cursor = "default";
+  isVirtualCursorVisible.value = false;
+  // nextTick(() => {
+  //   if(stageRef.value) {
+  //     stageRef.value.getStage().draw()
+  //   }
+  // })
+  if (!state.isDrawing) {
+    state.currentLinePoints = [];
+  }
+  state.showBrushOptions = state.isDrawing;
+};
+watch(
+  // () => state.isErasing,
+  // (isErasing) => {
+  //   const container = stageRef.value.getStage().container();
+  //   if (isErasing) {
+  //     container.style.cursor = `url(${eraserUrl}) 16 16, auto`;
+  //     // 触摸模式下强制显示虚拟光标
+  //     isVirtualCursorVisible.value = true;
+  //   } else {
+  //     container.style.cursor = "default";
+  //     isVirtualCursorVisible.value = false;
+  //   }
+  // }
+  () => state.isErasing || !state.isManualEraser,
+  (isErasingOrManual) => {
+    const container = stageRef.value.getStage().container();
+    if (isErasingOrManual) {
+      // 修改判断条件
+      container.style.cursor = `url(${eraserUrl}) 16 16, auto`;
+      isVirtualCursorVisible.value = navigator.maxTouchPoints > 0;
+    } else {
+      container.style.cursor = "default";
+      isVirtualCursorVisible.value = false;
+    }
+  }
+);
+const emit = defineEmits(["recognition-status", "fingerCountChange"]);
+const reset = () => {
+  state.isErasing = false;
+  state.isSelectionEnabled = false;
+  state.isDrawing = false;
+  state.isCompassing = false;
+  state.isQuadrilateralDrawing = false;
+  state.isMouseDown = false;
+  state.isIntellect = false;
+  state.isManualEraser = false;
+  isVirtualCursorVisible.value = false;
+};
+const toggleEraser = () => {
+  state.isErasing = true;
+  state.isSelectionEnabled = false;
+  state.isManualEraser = true;
+  state.isDrawing = false;
+  state.isCompassing = false;
+  state.isQuadrilateralDrawing = false;
+  state.isMouseDown = false;
+  state.isIntellect = false;
+  const container = stageRef.value.getStage().container();
+  container.style.cursor = `url(${eraserUrl}) 16 16, auto`;
+  isVirtualCursorVisible.value = false;
+};
+
+const toggleCompass = () => {
+  state.isCompassing = !state.isCompassing;
+  state.isSelectionEnabled = false;
+  state.isDrawing = false;
+  state.isErasing = false;
+  state.isQuadrilateralDrawing = false;
+  state.isMouseDown = false;
+  state.currentCircleCenter = null;
+  state.currentCircleRadius = 0;
+  state.isIntellect = false;
+  isVirtualCursorVisible.value = false;
+};
+
+const toggleQuadrilateral = () => {
+  state.isQuadrilateralDrawing = !state.isQuadrilateralDrawing;
+  state.isSelectionEnabled = false;
+  state.isDrawing = false;
+  state.isErasing = false;
+  state.isCompassing = false;
+  state.isMouseDown = false;
+  state.isIntellect = false;
+  state.currentLinePoints = [];
+  isVirtualCursorVisible.value = false;
+};
+
+const handleRectClick = (rect) => {
+  if (state.isSelectionEnabled) {
+    const stage = rect.getStage();
+    const pos = stage.getRelativePointerPosition();
+
+    // 添加边界检查
+    const { x, y } = pos;
+    const { width, height } = rect.getClientRect();
+    if (x < 0 || x > width || y < 0 || y > height) {
+      const index = state.selectedItems.indexOf(rect);
+      if (index === -1) {
+        state.selectedItems.push(rect);
+      } else {
+        state.selectedItems.splice(index, 1);
+      }
+      updateTransformerNodes();
+    }
+
+    // const index = state.selectedItems.indexOf(rect);
+    // if (index === -1) {
+    //   state.selectedItems.push(rect);
+    // } else {
+    //   state.selectedItems.splice(index, 1);
+    // }
+    // updateTransformerNodes();
+  }
+};
+
+const handleLineClick = (line) => {
+  if (state.isSelectionEnabled) {
+    const index = state.selectedItems.indexOf(line);
+    if (index === -1) {
+      state.selectedItems.push(line);
+    } else {
+      state.selectedItems.splice(index, 1);
+    }
+    updateTransformerNodes();
+  }
+};
+
+const handleCircleClick = (circle) => {
+  if (state.isSelectionEnabled) {
+    const index = state.selectedItems.indexOf(circle);
+    if (index === -1) {
+      state.selectedItems.push(circle);
+    } else {
+      state.selectedItems.splice(index, 1);
+    }
+    updateTransformerNodes();
+  }
+};
+
+const handleQuadrilateralClick = (quadrilateral) => {
+  if (state.isSelectionEnabled) {
+    const index = state.selectedItems.indexOf(quadrilateral);
+    if (index === -1) {
+      state.selectedItems.push(quadrilateral);
+    } else {
+      state.selectedItems.splice(index, 1);
+    }
+    updateTransformerNodes();
+  }
+};
+
+const isRectSelected = (rect) => {
+  return state.selectedItems.includes(rect);
+};
+
+const isLineSelected = (line) => {
+  return state.selectedItems.includes(line);
+};
+
+const isCircleSelected = (circle) => {
+  return state.selectedItems.includes(circle);
+};
+
+const isQuadrilateralSelected = (quadrilateral) => {
+  return state.selectedItems.includes(quadrilateral);
+};
+
+const getCorner = (pivotX, pivotY, diffX, diffY, angle) => {
+  const distance = Math.sqrt(diffX * diffX + diffY * diffY);
+  angle += Math.atan2(diffY, diffX);
+  const x = pivotX + distance * Math.cos(angle);
+  const y = pivotY + distance * Math.sin(angle);
+  return { x, y };
+};
+
+const getClientRect = (rotatedBox) => {
+  const { x, y, width, height } = rotatedBox;
+  const rad = rotatedBox.rotation || 0;
+  const p1 = getCorner(x, y, 0, 0, rad);
+  const p2 = getCorner(x, y, width, 0, rad);
+  const p3 = getCorner(x, y, width, height, rad);
+  const p4 = getCorner(x, y, 0, height, rad);
+  const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+  const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+  const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+  const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+};
+
+const getTotalBox = (boxes) => {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  boxes.forEach((box) => {
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
+  });
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+};
+
+const boundBoxFunc = (oldBox, newBox) => {
+  const box = getClientRect(newBox);
+  const isOut =
+    box.x < 0 ||
+    box.y < 0 ||
+    box.x + box.width > state.stageConfig.width ||
+    box.y + box.height > state.stageConfig.height;
+  if (isOut) {
+    return oldBox;
+  }
+  return newBox;
+};
+
+const handleRectDragMove = (e) => {
+  const node = e.target;
+  const newX = node.x();
+  const newY = node.y();
+  const rectConfig = state.rectangles.find((rect) => rect.id === node.id());
+  if (rectConfig) {
+    rectConfig.x = newX;
+    rectConfig.y = newY;
+  }
+};
+
+// const handleTransformStart = () => {
+//   // 可以在这里添加变换开始时的逻辑
+// };
+
+// const handleTransformEnd = () => {
+//   saveState();
+//   // 可以在这里添加变换结束时的逻辑
+// };
+
+const handleResize = () => {
+  state.stageConfig.width = window.innerWidth;
+  state.stageConfig.height = window.innerHeight;
+};
+
+const handleMouseDown = (e) => {
+
+  state.showBrushOptions = false;
+  const isTouchEvent = e.evt.type.startsWith("touch");
+  const pos = isTouchEvent
+    ? e.target.getStage().getPointerPosition(e.evt.touches[0])
+    : e.target.getStage().getPointerPosition();
+
+  if (state.isSelectionEnabled && state.selectedItems.length > 0) {
+    // const pos = e.target.getStage().getPointerPosition();
+
+    if (!transformerRef.value) return;
+
+    const transformer = transformerRef.value.getNode();
+    const box = getTotalBox(
+      transformer.nodes().map((node) => node.getClientRect())
+    );
+    if (
+      pos.x >= box.x &&
+      pos.x <= box.x + box.width &&
+      pos.y >= box.y &&
+      pos.y <= box.y + box.height
+    ) {
+      state.isDragging = true;
+      state.dragStartPos = pos;
+    }
+  }
+  if (state.isDrawing) {
+    // const pos = e.target.getStage().getPointerPosition();
+    state.currentLinePoints = [pos.x, pos.y];
+  }
+  if (state.isErasing) {
+    state.isMouseDown = true;
+    isVirtualCursorVisible.value = isTouchEvent;
+    virtualCursor.value.classList.add("active");
+    updateVirtualCursorPosition(pos);
+  }
+  if (state.isCompassing) {
+    // const pos = e.target.getStage().getPointerPosition();
+    state.currentCircleCenter = pos;
+  }
+  if (state.isQuadrilateralDrawing) {
+    // const pos = e.target.getStage().getPointerPosition();
+    state.currentLinePoints = [pos.x, pos.y];
+  }
+};
+
+const handleMouseMove = (e) => {
+  if (state.isDragging) {
+    if (!transformerRef.value) return;
+    const isTouchEvent = e.evt.type === "touchmove";
+    const pos =
+      isTouchEvent && e.evt.touches
+        ? e.target.getStage().getPointerPosition(e.evt.touches[0])
+        : e.target.getStage().getPointerPosition();
+    // const pos = e.target.getStage().getPointerPosition();
+
+    const dx = pos.x - state.dragStartPos.x;
+    const dy = pos.y - state.dragStartPos.y;
+    const transformer = transformerRef.value.getNode();
+    const nodes = transformer.nodes();
+    nodes.forEach((node) => {
+      const newX = node.x() + dx;
+      const newY = node.y() + dy;
+      node.position({ x: newX, y: newY });
+    });
+    state.dragStartPos = pos;
+  }
+
+  if (state.isDrawing && state.currentLinePoints.length > 0) {
+    const pos = e.target.getStage().getPointerPosition();
+    state.currentLinePoints = [...state.currentLinePoints, pos.x, pos.y];
+    state.currentLineTimestamps.push(Date.now());
+  }
+  if (state.isErasing) {
+    if (e.evt.type.startsWith("touch")) {
+      const touch = e.evt.touches[0];
+      const pos = {
+        x: touch.clientX,
+        y: touch.clientY,
+      };
+      updateVirtualCursorPosition(pos);
+    }
+    if (state.isMouseDown) {
+      eraserFun(e);
+    } else if (e.evt.type === "touchmove") {
+      isVirtualCursorVisible.value = navigator.maxTouchPoints > 0;
+      virtualCursor.value.classList.add("active");
+      const touch = e.evt.touches[0];
+      const pos = stageRef.value.getStage().getPointerPosition(touch);
+      eraserFun({ ...e, pos }); // 传入修正后的坐标
+    }
+  }
+
+  if (state.isCompassing && state.currentCircleCenter) {
+    const pos = e.target.getStage().getPointerPosition();
+    state.currentCircleRadius = Math.sqrt(
+      (pos.x - state.currentCircleCenter.x) ** 2 +
+        (pos.y - state.currentCircleCenter.y) ** 2
+    );
+  }
+  if (state.isQuadrilateralDrawing && state.currentLinePoints.length > 0) {
+    const pos = e.target.getStage().getPointerPosition();
+    const startX = state.currentLinePoints[0];
+    const startY = state.currentLinePoints[1];
+    state.currentQuadrilateral = {
+      x: Math.min(startX, pos.x),
+      y: Math.min(startY, pos.y),
+      width: Math.abs(pos.x - startX),
+      height: Math.abs(pos.y - startY),
+      stroke: state.selectColor,
+      strokeWidth: state.brushWidth,
+      fill: "transparent",
+      id: `temp-quad-${Date.now()}`,
+    };
+  }
+};
+const updateVirtualCursorPosition = (touch) => {
+  // const { clientX, clientY } = touch;
+  virtualCursor.value.style.left = `${touch.x - 16}px`;
+  virtualCursor.value.style.top = `${touch.y - 16}px`;
+};
+const eraserFun = (e) => {
+  const pos = e.pos || e.target.getStage().getPointerPosition();
+  if (isVirtualCursorVisible.value) {
+    updateVirtualCursorPosition(pos);
+  }
+  state.rectangles = state.rectangles.filter((rect) => {
+    return (
+      pos.x < rect.x ||
+      pos.x > rect.x + rect.width ||
+      pos.y < rect.y ||
+      pos.y > rect.y + rect.height
+    );
+  });
+  state.drawnLines = state.drawnLines.flatMap((line) => {
+    const lineNode = transformerRef.value
+      .getNode()
+      .getStage()
+      .findOne(`#${line.id}`);
+    if (!lineNode) return [];
+    if (line.type === "text") {
+      const textWidth = line.text.length * line.fontSize * 0.6;
+      const textHeight = line.fontSize;
+      if (
+        pos.x >= line.x &&
+        pos.x <= line.x + textWidth &&
+        pos.y >= line.y &&
+        pos.y <= line.y + textHeight
+      ) {
+        return [];
+      }
+      return [line];
+    }
+    const transform = lineNode.getAbsoluteTransform().copy();
+    transform.invert();
+    const localPos = transform.point(pos);
+    const segments = [];
+    let currentSegment = [];
+    for (let i = 0; i < line.points.length; i += 2) {
+      const x = line.points[i];
+      const y = line.points[i + 1];
+      const distance = pointToLineDistance(
+        localPos.x,
+        localPos.y,
+        x,
+        y,
+        line.points[i + 2] || x,
+        line.points[i + 3] || y
+      );
+      if (distance > 30) {
+        currentSegment.push(x, y);
+      } else if (currentSegment.length > 0) {
+        segments.push([...currentSegment]);
+        currentSegment = [];
+      }
+    }
+    if (currentSegment.length > 0) {
+      segments.push(currentSegment);
+    }
+    return segments.map((points) => ({
+      ...line,
+      points,
+      id: `${line.id}-${Math.random().toString(36).substr(2, 5)}`,
+    }));
+  });
+  state.drawnCircles = state.drawnCircles.filter((circle) => {
+    const distance = Math.sqrt(
+      (pos.x - circle.x) ** 2 + (pos.y - circle.y) ** 2
+    );
+    return distance > circle.radius + state.brushWidth;
+  });
+  state.drawnQuadrilaterals = state.drawnQuadrilaterals.filter((quad) => {
+    const startX = quad.x - 10;
+    const startY = quad.y - 10;
+    const endX = quad.x + quad.width + 10;
+    const endY = quad.y + quad.height + 10;
+    return !(
+      pos.x >= Math.min(startX, endX) &&
+      pos.x <= Math.max(startX, endX) &&
+      pos.y >= Math.min(startY, endY) &&
+      pos.y <= Math.max(startY, endY)
+    );
+  });
+};
+const handleMouseUp = (e) => {
+
+  isVirtualCursorVisible.value = false;
+  if (state.isDragging) {
+    if (!transformerRef.value) return;
+    const transformer = transformerRef.value.getNode();
+    const nodes = transformer.nodes();
+    nodes.forEach((shape) => {
+      if (shape.getClassName() === "Line") {
+        const line = state.drawnLines.find((l) => l.id === shape.id());
+        if (line) {
+          const absPos = shape.getAbsolutePosition();
+          const scaleX = shape.scaleX();
+          const scaleY = shape.scaleY();
+          const rotation = shape.rotation();
+
+          shape.scaleX(1);
+          shape.scaleY(1);
+          shape.rotation(0);
+
+          line.points = shape.points();
+          line.x = absPos.x;
+          line.y = absPos.y;
+
+          shape.scaleX(scaleX);
+          shape.scaleY(scaleY);
+          shape.rotation(rotation);
+        }
+      }
+    });
+    saveState();
+    state.isDragging = false;
+  }
+  state.isMouseDown = false;
+  state.isDragging = false;
+  if (state.isDrawing && state.currentLinePoints.length > 0) {
+    if (state.currentLinePoints.length < 4) {
+      state.currentLineTimestamps = [];
+      state.currentLinePoints = [];
+      return;
+    }
+
+    const newLine = {
+      points: state.currentLinePoints,
+      stroke: state.selectColor,
+      strokeWidth: state.brushWidth,
+      tension: 0.5,
+      id: `line-${state.lineIdCounter++}`,
+      timestamps:
+        state.currentLineTimestamps.length ===
+        state.currentLinePoints.length / 2
+          ? state.currentLineTimestamps
+          : Array(state.currentLinePoints.length / 2)
+              .fill()
+              .map((_, i) => Date.now() + i),
+    };
+    if (state.isIntellect) {
+      state.AllPoints = [];
+      state.intellectLines.push(newLine);
+      state.drawnLines.push(newLine);
+      const tempLineIds = new Set(state.intellectLines.map((line) => line.id));
+      const currentLines = [...state.intellectLines];
+      const currentWidth = state.brushWidth;
+      clearTimeout(state.debounceTimer);
+      state.lastDrawTime = Date.now();
+      state.debounceTimer = setTimeout(async () => {
+        if (Date.now() - state.lastDrawTime < 1000) return;
+        try {
+          const recognizer = useRecognizer();
+          state.AllPoints = [];
+          currentLines.forEach((line, index) => {
+            if (!line.points || line.points.length % 2 !== 0) return;
+            const points = [];
+            for (let i = 0; i < line.points.length; i += 2) {
+              points.push({
+                x: line.points[i],
+                y: line.points[i + 1],
+                t: line.timestamps[i / 2],
+                p: currentWidth,
+              });
+            }
+            state.AllPoints.push({
+              id: line.id,
+              stroke: line.stroke,
+              pointerType: "pen",
+              length: 100,
+              creationTime: 1,
+              modificationDate: 1,
+              style: {
+                width: 1,
+              },
+              type: "stroke",
+              pointers: points,
+              pointCount: points.length,
+            });
+          });
+          emit("recognition-status", {
+            status: "loading",
+            data: "正在识别",
+          });
+          await recognizer.send(state.AllPoints, "zh").then((res) => {
+            try {
+              const result = typeof res === "string" ? JSON.parse(res) : res;
+              state.recoData = result;
+              createTextElements(result);
+              state.drawnLines = state.drawnLines.filter(
+                (line) => !tempLineIds.has(line.id)
+              );
+              saveState();
+              state.intellectLines = [];
+              state.AllPoints = [];
+              emit("recognition-status", {
+                status: "success",
+                data: result,
+              });
+            } catch (error) {
+              emit("recognition-status", {
+                status: "error",
+                message: "解析识别结果失败",
+              });
+              console.error("解析识别结果失败:", error);
+            }
+          });
+        } catch (error) {
+          console.error("识别失败:", error);
+        }
+      }, 1000);
+    } else {
+      state.drawnLines.push(newLine);
+    }
+    state.currentLineTimestamps = [];
+    state.currentLinePoints = [];
+    saveState();
+  }
+  if (
+    state.isCompassing &&
+    state.currentCircleCenter &&
+    state.currentCircleRadius > 0
+  ) {
+    const newCircle = {
+      x: state.currentCircleCenter.x,
+      y: state.currentCircleCenter.y,
+      radius: state.currentCircleRadius,
+      stroke: state.selectColor,
+      strokeWidth: state.brushWidth,
+      fill: "transparent",
+      id: `circle-${state.circleIdCounter++}`,
+    };
+    state.drawnCircles.push(newCircle);
+    state.currentCircleCenter = null;
+    state.currentCircleRadius = 0;
+    saveState();
+  }
+  if (state.isErasing) {
+    saveState();
+  }
+  if (state.isQuadrilateralDrawing && state.currentLinePoints.length > 0) {
+    state.drawnQuadrilaterals.push({
+      ...state.currentQuadrilateral,
+      id: `quadrilateral-${state.quadrilateralIdCounter}`,
+    });
+    state.quadrilateralIdCounter++;
+    state.currentLinePoints = [];
+    state.currentQuadrilateral = null;
+    saveState();
+  }
+};
+
+const createTextElements = (recoData) => {
+  if (!Array.isArray(recoData)) {
+    console.error("无效的识别数据格式:", recoData);
+    return;
+  }
+  recoData.forEach((item, index) => {
+    const correspondingLine = state.intellectLines[index];
+    if (correspondingLine && correspondingLine.points.length > 0) {
+      const [x, y] = correspondingLine.points;
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+      correspondingLine.points.forEach((val, i) => {
+        if (i % 2 === 0) {
+          minX = Math.min(minX, val);
+          maxX = Math.max(maxX, val);
+        } else {
+          minY = Math.min(minY, val);
+          maxY = Math.max(maxY, val);
+        }
+      });
+      const fontSize = Math.max(
+        Math.max((maxY - minY) * 1.5, (maxX - minX) * 1.5)
+      );
+      state.drawnLines.push({
+        type: "text",
+        text: item.label,
+        x,
+        y: y - 20,
+        fontSize: fontSize,
+        fill: state.selectColor,
+        id: `text-${Date.now()}-${index}`,
+      });
+    }
+  });
+};
+
+const updateTransformerNodes = () => {
+  if (!transformerRef.value) return;
+  const transformer = transformerRef.value.getNode();
+  const nodes = state.selectedItems.map((item) => {
+    const node = transformer.getStage().findOne(`#${item.id}`);
+    if (node && item.type === "text") {
+      node.scaleX(1);
+      node.scaleY(1);
+    }
+    return node;
+  });
+  transformer.nodes(nodes.filter((n) => n));
+};
+
+const pointToLineDistance = (x, y, x1, y1, x2, y2) => {
+  const A = x - x1;
+  const B = y - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+  const dot = A * C + B * D;
+  const len_sq = C * C + D * D;
+  let param = -1;
+  if (len_sq !== 0) {
+    param = dot / len_sq;
+  }
+  let xx, yy;
+  if (param < 0) {
+    xx = x1;
+    yy = y1;
+  } else if (param > 1) {
+    xx = x2;
+    yy = y2;
+  } else {
+    xx = x1 + param * C;
+    yy = y1 + param * D;
+  }
+  const dx = x - xx;
+  const dy = y - yy;
+  return Math.sqrt(dx * dx + dy * dy);
+};
+
+const saveState = () => {
+  const currentState = {
+    rectangles: [...state.rectangles],
+    drawnLines: [...state.drawnLines],
+    drawnCircles: [...state.drawnCircles],
+    drawnQuadrilaterals: [...state.drawnQuadrilaterals],
+  };
+  state.historyStack.push(currentState);
+};
+
+const undo = () => {
+  if (state.historyStack.length > 1) {
+    state.historyStack.pop();
+    const previousState = state.historyStack[state.historyStack.length - 1];
+    state.rectangles = [...previousState.rectangles];
+    state.drawnLines = [...previousState.drawnLines];
+    state.drawnCircles = [...previousState.drawnCircles];
+    state.drawnQuadrilaterals = [...previousState.drawnQuadrilaterals];
+  }
+};
+defineExpose({
+  toggleDrawing,
+  toggleEraser,
+  clearScreen,
+  toggleSelection,
+  setBrushColor,
+  logAllPoints,
+  getDrawnLines,
+  setBrushWidth,
+  reset,
+});
 </script>
 
 <style scoped>
+.virtual-cursor {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  pointer-events: none;
+  background: url(./eraser.png) no-repeat center/contain;
+  z-index: 1000;
+  display: none; /* 默认隐藏 */
+}
+
+.virtual-cursor.active {
+  display: block; /* 激活时显示 */
+}
+v-deep .konvajs-content {
+  width: 100% !important;
+  height: 100% !important;
+}
 button {
   margin: 10px;
   padding: 5px 10px;

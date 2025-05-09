@@ -1,9 +1,11 @@
 import {
-  PartialDeep,
   RecognizerHTTPV2,
+} from "iink-ts";
+import type {
+  PartialDeep,
   TRecognizerHTTPV2RecognitionConfiguration,
   TServerHTTPConfiguration,
-  TStroke
+  TStroke,
 } from "iink-ts";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -36,7 +38,7 @@ export default function useRecognizer() {
   let enR = new RecognizerHTTPV2({ server, recognition: enRecognition });
   let mathR = new RecognizerHTTPV2({ server, recognition: mathRecognition });
   // paths：TStroke[]  type: zh、en or math
-  function send(paths, type) {
+  function send(paths: TStroke[], type: string) {
     console.log("识别", paths);
     return new Promise<string>((resolve, reject) => {
       if (type == "zh") {
